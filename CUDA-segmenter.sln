@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30309.148
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CUDA-segmenter", "CUDA-segmenter\CUDA-segmenter.vcxproj", "{3FAD6CAA-FC32-42B7-8E56-4A35C92E4818}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3FAD6CAA-FC32-42B7-8E56-4A35C92E4818}.Debug|x64.ActiveCfg = Debug|x64
+		{3FAD6CAA-FC32-42B7-8E56-4A35C92E4818}.Debug|x64.Build.0 = Debug|x64
+		{3FAD6CAA-FC32-42B7-8E56-4A35C92E4818}.Release|x64.ActiveCfg = Release|x64
+		{3FAD6CAA-FC32-42B7-8E56-4A35C92E4818}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {67AE1467-AE05-4F17-B345-1F2EB89ECD93}
+	EndGlobalSection
+EndGlobal
