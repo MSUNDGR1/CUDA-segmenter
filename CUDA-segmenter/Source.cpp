@@ -38,14 +38,14 @@ int main(){
     Clicked = false;
     while (true) {
         vid0 >> frame;
-        //frame = imread("env_ex.png");
+        //frame = imread("env_alt.png");
 
 
         if (!frame.empty()) {
             
             Mat gFrame;
             cvtColor(frame, gFrame, COLOR_BGR2GRAY);
-            pair<Mat, int*> out = seg::segment(gFrame, 0.005, 40);
+            pair<Mat, int*> out = seg::segment(gFrame, 0.005, 400);
             frame = out.first;
             imshow("Cam 0", frame);
             imshow("Cam 1", gFrame);

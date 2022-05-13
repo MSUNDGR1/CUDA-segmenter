@@ -642,6 +642,78 @@ __global__ void clusterMeanDiv(float* clusterMeans, int rows, int cols, int* clu
 	}
 }
 
+__global__ void pullMerge(unsigned char* img, int* clusters, int rows, int cols, float diff, int* newClust, float* clusterMeans, bool offset) {
+	int rowInd = blockIdx.x * blockDim.x + threadIdx.x;
+	int colInd = blockIdx.y * blockDim.y + threadIdx.y;
+	int realInd = rowInd * cols + colInd;
+
+	if (rowInd < rows && colInd < cols) {
+		int bestClust = -1;
+		float bestDiff = 255;
+		if (offset && realInd %2 == 1) {
+			if (rowInd != 0) {
+				int nextInd = (rowInd - 1) * cols + colInd;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (rowInd < rows - 1) {
+				int nextInd = (rowInd + 1) * cols + colInd;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (colInd != 0) {
+				int nextInd = rowInd * cols + cols - 1;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (colInd < cols - 1) {
+				int nextInd = rowInd * cols + cols + 1;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+		}
+		else if (!offset && realInd % 2 == 0) {
+			if (rowInd != 0) {
+				int nextInd = (rowInd - 1) * cols + colInd;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (rowInd < rows - 1) {
+				int nextInd = (rowInd + 1) * cols + colInd;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (colInd != 0) {
+				int nextInd = rowInd * cols + cols - 1;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+			if (colInd < cols - 1) {
+				int nextInd = rowInd * cols + cols + 1;
+				if (abs(clusterMeans[clusters[nextInd]] - img[realInd]) < bestDiff) {
+					bestDiff = abs(clusterMeans[clusters[nextInd]] - img[realInd]);
+					bestClust = clusters[nextInd];
+				}
+			}
+		}
+		newClust[realInd] = bestClust;
+	}
+}
+
 __global__ void clusterIsolateKernel(unsigned char* Rchan, unsigned char* Gchan, unsigned char* Bchan, int* clusterIDS, int rows, int cols, char R, char G, char B, int clusterNum) {
 	int rowInd = blockIdx.x * blockDim.x + threadIdx.x;
 	int colInd = blockIdx.y * blockDim.y + threadIdx.y;
@@ -995,327 +1067,338 @@ namespace seg {
 		bool modOrder = false;
 		float diffMod = 0.97;
 		float oldDiff = diffParam;
+		bool pullMergeKern = true;
 		std::vector<bool> segVec(12, false);
-		for (int i = 0; i < cycles; i++) {
-			if (altRandDet) {
-				if (i % (altRandDet_detcount + alrRandDet_randcount) < alrRandDet_randcount) {
-					random = true;
+		if (!pullMergeKern) {
+			for (int i = 0; i < cycles; i++) {
+				if (altRandDet) {
+					if (i % (altRandDet_detcount + alrRandDet_randcount) < alrRandDet_randcount) {
+						random = true;
+					}
+					else {
+						random = false;
+					}
 				}
+				//diffParam *= diffMod;
+				if (diffParam < oldDiff / 5.0) {
+					//diffParam = oldDiff;
+				}
+				if (random) {
+					for (int j = 0; j < 8; j++) {
+						segVec[j] = rand() % 3 == 1;
+					}
+					if (segVec[0]) {
+						ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[1]) {
+						ngbrCompRE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[4]) {
+						ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[5]) {
+						ngbrCompDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[2]) {
+						ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[3]) {
+						ngbrCompRO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[6]) {
+						ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[7]) {
+						ngbrCompDO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					}
+					if (segVec[8]) {
+						ngbrCompLUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[9]) {
+						ngbrCompLDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[10]) {
+						ngbrCompRUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+					if (segVec[11]) {
+						ngbrCompRDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+						clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					}
+				}
+				/*else if (altMerge) {
+					ngbrCompLEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+
+					ngbrCompREA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompUEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompDEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompLOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompROA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompUOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+					ngbrCompDOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+					cudaDeviceSynchronize();
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+				}//
+				/*else if (!modOrder) {
+						ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+
+						ngbrCompRE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompRO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+						ngbrCompDO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+						clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+
+						clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
+						cudaDeviceSynchronize();
+						clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+
+				}*/
 				else {
-					random = false;
-				}
-			}
-			//diffParam *= diffMod;
-			if (diffParam < oldDiff /5.0) {
-				//diffParam = oldDiff;
-			}
-			if (random) {
-				for (int j = 0; j < 8; j++) {
-					segVec[j] = rand() % 3 == 1;
-				}
-				if (segVec[0]) {
-					ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[1]) {
-					ngbrCompRE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[4]) {
-					ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[5]) {
-					ngbrCompDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[2]) {
-					ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[3]) {
-					ngbrCompRO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[6]) {
-					ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[7]) {
-					ngbrCompDO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				}
-				if (segVec[8]) {
-					ngbrCompLUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[9]) {
-					ngbrCompLDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[10]) {
-					ngbrCompRUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-				if (segVec[11]) {
-					ngbrCompRDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					
-					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				}
-			}
-			/*else if (altMerge) {
-				ngbrCompLEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-
-				ngbrCompREA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompUEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompDEA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompLOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompROA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompUOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-				ngbrCompDOA << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-				cudaDeviceSynchronize();
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-			}//
-			/*else if (!modOrder) {
-					ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-					
 
 					ngbrCompRE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-					ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
 					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 					ngbrCompDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-					ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
 					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 					ngbrCompRO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
-					ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
 					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
+
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 					ngbrCompDO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
 
+
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
+					ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
+
+
+					clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
+					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
+					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
 					clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 
-					clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
-					cudaDeviceSynchronize();
-					clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
+				}
+			}
+		}else {
+			for (int i = 0; i < cycles; i++) {
+				bool offset = i % 2 == 0;
 
-			}*/
-			else {
-
-				ngbrCompRE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
+				pullMerge << <gGrid, bGrid >> > (d_img, clusterIDs input.rows, input.cols, diff, newIDs, clustMean, offset);
 				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
 				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
 				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
 				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompLE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompDE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompUE << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompRO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompLO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompDO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-				ngbrCompUO << < gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, diff, newIDs, clustMean);
-
-				
-				clusterMeanMul << <gGrid, bGrid >> > (clusterSize, clustMean, input.rows, input.cols);
-				clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean, newIDs);
-				clusterMeanDiv << <gGrid, bGrid >> > (clustMean, input.rows, input.cols, clusterSize);
-				clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
-					
 			}
 		}
-			
-
 		//printf("segment iter:%d \n", i);
 		//clusterSync << <gGrid, bGrid >> > (clusterIDs, input.rows, input.cols, newIDs, clusterSize, clustMean);
 		//clusterMeanSum << <gGrid, bGrid >> > (d_img, clusterIDs, clusterSize, input.rows, input.cols, clustMean);
@@ -1326,9 +1409,9 @@ namespace seg {
 		else {
 			imOut << <gGrid, bGrid >> > (d_img, clusterIDs, clustMean, input.rows, input.cols);
 		}
-		bool boundaryDraw = true;
+		bool boundaryDraw = false;
 		if (boundaryDraw) {
-			clusterBoundaryDraw << <gGrid, bGrid >> > (d_img, clusterIDs, input.rows, input.cols, clustMean, diff, false);
+			clusterBoundaryDraw << <gGrid, bGrid >> > (d_img, clusterIDs, input.rows, input.cols, clustMean, diff, true);
 		}
 		int* outClusters = new int[input.rows * input.cols];
 		size = sizeof(unsigned char) * input.rows * input.cols;
